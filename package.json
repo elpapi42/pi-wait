@@ -1,21 +1,19 @@
 {
-  "name": "@marcfargas/pi-heartbeat",
-  "version": "0.0.1",
-  "description": "Non-blocking timer tool for pi agents",
+  "name": "pi-wait",
+  "version": "0.1.0",
+  "description": "Durable wait extension for Pi.",
   "author": "Marc Fargas",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/marcfargas/pi-heartbeat.git"
+    "url": "https://github.com/elpapi42/pi-wait.git"
   },
   "keywords": [
     "pi",
     "pi-package",
-    "agent",
-    "timer",
-    "wake-up",
-    "non-blocking"
+    "wait",
+    "durable"
   ],
   "files": [
     "src/**/*.ts",
@@ -27,22 +25,18 @@
       "./src/index.ts"
     ]
   },
-  "peerDependencies": {
-    "@mariozechner/pi-coding-agent": ">=0.50.0"
-  },
-  "dependencies": {
-    "@sinclair/typebox": "^0.34.0"
-  },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src/"
+    "test": "tsx --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@eslint/js": "^9.27.0",
-    "@mariozechner/pi-coding-agent": ">=0.50.0",
-    "eslint": "^9.27.0",
-    "globals": "^16.1.0",
-    "typescript": "^5.8.3",
-    "typescript-eslint": "^8.32.1"
+    "@types/node": "^24.13.3",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.85.0",
+    "@earendil-works/pi-tui": ">=0.85.0",
+    "@sinclair/typebox": ">=0.34.0"
   }
 }
