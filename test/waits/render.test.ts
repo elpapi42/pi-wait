@@ -41,7 +41,7 @@ test("renders pending, completed, expanded, and error wait calls", async () => {
     assert.equal(text(generated), "wait wait-… · 5s");
     const expanded = renderer.renderWaitResult({ content: [], details: { waitId: "wait-1234567" } }, { expanded: true }, theme(), { state: generatedState, args: { seconds: 5, message: "Check CI status." }, isError: false, invalidate: () => { throw new Error("must not invalidate while rendering"); } });
     assert.equal(text(generated), "wait wait-1234567 · 5s");
-    assert.equal(text(expanded), "─── Check ───\nCheck CI status.");
+    assert.equal(text(expanded), "─── Wake context ───\nCheck CI status.");
 
     assert.equal(text(renderer.renderWaitCall({ seconds: 5, message: "x", id: "BAD ID" }, theme(), { state: {} })), "wait wait-… · 5s");
     assert.equal(text(renderer.renderWaitResult({ content: [{ type: "text", text: "Wait failed." }] }, { expanded: false }, theme(), { state: {}, isError: true, invalidate() {} })), "Wait failed.");

@@ -67,7 +67,7 @@ export function renderWaitResult(result: any, { expanded }: { expanded: boolean 
   const output = textContent(result);
   if (context.isError) return new Text(theme.fg("error", output || "Wait scheduling failed."), 0, 0);
   if (!expanded || typeof context.args?.message !== "string") return new Container();
-  return section(theme.fg("muted", "─── Check ───"), theme.fg("dim", context.args.message));
+  return section(theme.fg("muted", "─── Wake context ───"), theme.fg("dim", context.args.message));
 }
 
 export function renderDueMessage(message: any, { expanded }: { expanded: boolean }, theme: any) {
