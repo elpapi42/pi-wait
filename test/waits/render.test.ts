@@ -52,7 +52,7 @@ test("renders due messages without duplicating identifiers", async () => {
   const { renderer, cleanup } = await loadRenderer();
   try {
     const renderTheme = theme();
-    const due = renderer.renderDueMessage({ content: "deploy-check:\n\nThis wait is due.\n\nCheck deployment health.", details: { waitId: "deploy-check", generationId: "11111111-1111-4111-8111-111111111111", dueAt: 1_000 } }, { expanded: true }, renderTheme);
+    const due = renderer.renderDueMessage({ content: "deploy-check:\n\nThis wait is due.\n\nCheck deployment health.", details: { waitId: "deploy-check", generationId: "11111111-1111-4111-8111-111111111111", ownerSessionId: "session-a", dueAt: 1_000 } }, { expanded: true }, renderTheme);
     assert.equal(text(due), "⏱ wait deploy-check: due\nCheck deployment health.");
     assert.equal(due.paddingX, 1);
     assert.equal(due.paddingY, 1);

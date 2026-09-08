@@ -28,18 +28,26 @@ The due message starts a turn. It does not require user-visible text. The harnes
 
 ## Behavior and limits
 
-`pi-wait` uses an append-only, branch-local ledger:
+`pi-wait` uses an append-only, session-owned, branch-local V2 ledger:
 
 ```text
-wait.scheduled { waitId, generationId, dueAt, message }
-wait.fired { waitId, generationId, firedAt }
+wait.scheduled { version: 2, ownerSessionId, waitId, generationId, dueAt, message }
+wait.fired { version: 2, ownerSessionId, waitId, generationId, firedAt }
 ```
 
-The latest `wait.scheduled` record for a public `waitId` replaces older generations. `generationId` is internal. It prevents an old timeout from firing a replacement and deduplicates due-message replay.
+Only the Pi session whose header ID matches `ownerSessionId` can project, arm, fire, or replay a wait. A copied session, including an async-fork child, ignores waits copied from another session. Branches within the same session keep their existing behavior: a pre-split wait is available in descendant branches, while a post-split wait stays on its branch and descendants.
 
-Pending waits survive reload, restart, and session shutdown. If Pi is stopped after a deadline, the wait fires once when its branch next becomes active. A wait remains inactive while its branch is inactive. A wait inherited by a descendant branch can fire once in each branch that later becomes active.
+The latest `wait.scheduled` record for a public `waitId` replaces older generations for the same session. `generationId` is internal. It prevents an old timeout from firing a replacement and deduplicates due-message replay with the session owner.
 
-Delivery is at least once. `wait.fired` is stored before delivery. If Pi stops before its due message persists, branch reconciliation sends it again. The custom-message metadata suppresses later replay after persistence.
+Pending V2 waits survive reload, restart, and session shutdown. If Pi is stopped after a deadline, the wait fires once when its branch next becomes active. A wait remains inactive while its branch is inactive.
+
+Delivery is at least once. `wait.fired` is stored before delivery. If Pi stops before its due message persists, branch reconciliation sends it again. The V2 custom-message metadata suppresses later replay after persistence.
+
+## V2 cutover
+
+After you reload this version, pre-upgrade V1 `pi-wait` records and due messages are intentionally inactive. Reschedule any pending wait you still need. This prevents a copied session from executing a wait owned by another session.
+
+Do not roll back to older pi-wait code while V1 records remain in a session that can be copied. Older code can reactivate those V1 waits and reintroduce copied-session execution. Older code ignores V2 records, so rolling back also drops pending V2 waits.
 
 The extension uses the local wall clock. Clock rollback can delay a wait. Clock advance can make it due early.
 

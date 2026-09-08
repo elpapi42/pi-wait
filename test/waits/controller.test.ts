@@ -56,7 +56,8 @@ function harness(branch: any[] = [], now = 1_000, generationStart = 0) {
     appendEntry(customType: string, data: any) { current.push({ type: "custom", customType, data }); events.push(data.type); },
     sendMessage(...args: any[]) { messages.push(args); events.push("due"); },
   };
-  const ctx = { sessionManager: { getBranch: () => current } };
+  let sessionId: unknown = "session-a";
+  const ctx = { sessionManager: { getBranch: () => current, getHeader: () => ({ id: sessionId }) } };
   let ids = 0;
   let generation = generationStart;
   const controller = new Controller(pi, {
@@ -75,6 +76,7 @@ function harness(branch: any[] = [], now = 1_000, generationStart = 0) {
     now: () => clock,
     setNow(value: number) { clock = value; },
     setBranch(value: any[]) { current = value; },
+    setSessionId(value: unknown) { sessionId = value; },
   };
 }
 
@@ -126,7 +128,7 @@ test("rejects a different session manager outside a lifecycle transition", async
   const h = harness();
   await h.controller.start(h.ctx);
   await h.controller.schedule(h.ctx, 5, "Check existing.", "existing-check");
-  const other = { sessionManager: { getBranch: () => [] } };
+  const other = { sessionManager: { getBranch: () => [], getHeader: () => ({ id: "session-b" }) } };
   await assert.rejects(() => h.controller.schedule(other, 5, "Check other.", "other-check"), /different session manager/);
   assert.equal(h.ctx.sessionManager.getBranch().filter((entry) => entry?.data?.type === "wait.scheduled").length, 1);
   assert.equal(h.timers.pending.size, 1);
@@ -193,7 +195,7 @@ test("does not replay a delivered fired generation after same-ID replacement", a
   first.timers.fire(1);
   await drainQueue();
   const generationId = branch.find((entry) => entry?.data?.type === "wait.fired")?.data.generationId;
-  branch.push({ type: "custom_message", customType: "pi-wait-due", details: { generationId } });
+  branch.push({ type: "custom_message", customType: "pi-wait-due-v2", details: { generationId, ownerSessionId: "session-a" } });
   await first.controller.schedule(first.ctx, 10, "Check replacement.", "deploy-check");
 
   const restored = harness(branch, 2_000);
@@ -217,15 +219,28 @@ test("delivers simultaneous overdue replacements in schedule order", async () =>
 test("replays a fired wait only when its due message is absent", async () => {
   const generationId = "11111111-1111-4111-8111-111111111111";
   const branch: any[] = [
-    { type: "custom", customType: "pi-wait", data: { type: "wait.scheduled", waitId: "deploy-check", generationId, dueAt: 1_000, message: "Check deploy health." } },
-    { type: "custom", customType: "pi-wait", data: { type: "wait.fired", waitId: "deploy-check", generationId, firedAt: 1_000 } },
+    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.scheduled", waitId: "deploy-check", generationId, dueAt: 1_000, message: "Check deploy health." } },
+    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.fired", waitId: "deploy-check", generationId, firedAt: 1_000 } },
   ];
   const h = harness(branch);
   await h.controller.start(h.ctx);
   assert.equal(h.messages.length, 1);
-  branch.push({ type: "custom_message", customType: "pi-wait-due", details: { generationId } });
+  branch.push({ type: "custom_message", customType: "pi-wait-due-v2", details: { generationId, ownerSessionId: "session-a" } });
   await h.controller.afterTree(h.ctx);
   assert.equal(h.messages.length, 1);
+});
+
+test("replays an owner-fired wait despite a forged foreign due message", async () => {
+  const generationId = "11111111-1111-4111-8111-111111111111";
+  const branch: any[] = [
+    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.scheduled", waitId: "deploy-check", generationId, dueAt: 1_000, message: "Check deploy health." } },
+    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.fired", waitId: "deploy-check", generationId, firedAt: 1_000 } },
+    { type: "custom_message", customType: "pi-wait-due-v2", details: { generationId, ownerSessionId: "session-b" } },
+  ];
+  const h = harness(branch);
+  await h.controller.start(h.ctx);
+  assert.equal(h.messages.length, 1);
+  assert.equal(h.messages[0][0].details.ownerSessionId, "session-a");
 });
 
 test("defers an overdue wait on an inactive branch until that branch becomes active", async () => {
@@ -294,8 +309,10 @@ test("resumes canceled navigation when later scheduling work", async () => {
 test("rejects generated IDs after ten historical collisions", async () => {
   const branch = Array.from({ length: 10 }, (_, index) => ({
     type: "custom",
-    customType: "pi-wait",
+    customType: "pi-wait-v2",
     data: {
+      version: 2,
+      ownerSessionId: "session-a",
       type: "wait.scheduled",
       waitId: `wait-${String(index + 1).padStart(7, "0")}`, 
       generationId: `${String(index + 1).padStart(8, "0")}-1111-4111-8111-111111111111`,
@@ -319,4 +336,54 @@ test("stops idempotently and restores pending waits after restart", async () => 
   await restored.controller.start(restored.ctx);
   assert.equal(restored.timers.pending.size, 1);
   assert.equal(restored.timers.delays.get(1), 3_000);
+});
+
+test("ignores copied waits from another session while allowing its own waits", async () => {
+  const parentBranch: any[] = [];
+  const parent = harness(parentBranch);
+  await parent.controller.start(parent.ctx);
+  await parent.controller.schedule(parent.ctx, 1, "Parent-only wake.", "parent-check");
+
+  const child = harness(parentBranch, 2_000);
+  child.setSessionId("session-b");
+  await child.controller.start(child.ctx);
+  assert.equal(child.timers.pending.size, 0);
+  assert.equal(child.messages.length, 0);
+  assert.equal(parentBranch.filter((entry) => entry?.data?.type === "wait.fired").length, 0);
+
+  await child.controller.schedule(child.ctx, 1, "Child-only wake.", "child-check");
+  child.setNow(3_000);
+  child.timers.fire([...child.timers.pending.keys()][0]);
+  await drainQueue();
+  assert.deepEqual(child.messages.map(([message]) => message.details.waitId), ["child-check"]);
+  assert.equal(parentBranch.at(-1)?.data.ownerSessionId, "session-b");
+});
+
+test("inherits a pre-split wait across branches in the same session", async () => {
+  const branchA: any[] = [];
+  const h = harness(branchA);
+  await h.controller.start(h.ctx);
+  await h.controller.schedule(h.ctx, 1, "Check inherited branch.", "branch-check");
+  const branchB = [...branchA];
+  await h.controller.beforeTree();
+  h.setBranch(branchB);
+  h.setNow(2_000);
+  await h.controller.afterTree(h.ctx);
+  assert.equal(h.messages.length, 1);
+  assert.equal(branchB.at(-1)?.data.ownerSessionId, "session-a");
+  assert.equal(branchA.filter((entry) => entry?.data?.type === "wait.fired").length, 0);
+});
+
+test("fails closed when the session header ID is missing or invalid", async () => {
+  const h = harness();
+  h.setSessionId("");
+  await h.controller.start(h.ctx);
+  assert.equal(h.timers.pending.size, 0);
+  await assert.rejects(() => h.controller.schedule(h.ctx, 1, "Do not schedule.", "blocked-check"), /non-empty session header ID/);
+  assert.equal(h.ctx.sessionManager.getBranch().length, 0);
+
+  h.setSessionId(42);
+  await h.controller.afterTree(h.ctx);
+  assert.equal(h.timers.pending.size, 0);
+  assert.equal(h.messages.length, 0);
 });

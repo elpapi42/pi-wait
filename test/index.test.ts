@@ -25,6 +25,7 @@ test("registers only wait with its due renderer and lifecycle handlers", () => {
   assert.equal(Object.hasOwn(tools[0].parameters.properties, "timer"), false);
   assert.equal(typeof tools[0].renderCall, "function");
   assert.equal(typeof tools[0].renderResult, "function");
+  assert.equal(DUE_TYPE, "pi-wait-due-v2");
   assert.ok(renderers.has(DUE_TYPE));
   assert.ok(events.has("session_start"));
   assert.ok(events.has("session_before_tree"));

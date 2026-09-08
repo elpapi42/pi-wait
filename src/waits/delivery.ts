@@ -7,14 +7,14 @@ export function formatDue(waitId: string, message: string): string {
 export class Delivery {
   #tail = Promise.resolve();
 
-  deliver(pi: any, waitId: string, generationId: string, dueAt: number, message: string): Promise<void> {
+  deliver(pi: any, waitId: string, generationId: string, ownerSessionId: string, dueAt: number, message: string): Promise<void> {
     const work = this.#tail.catch(() => undefined).then(() => {
       pi.sendMessage(
         {
           customType: DUE_TYPE,
           content: formatDue(waitId, message),
           display: true,
-          details: { waitId, generationId, dueAt },
+          details: { waitId, generationId, ownerSessionId, dueAt },
         },
         { deliverAs: "steer", triggerTurn: true },
       );
@@ -23,7 +23,7 @@ export class Delivery {
     return work;
   }
 
-  wasDelivered(entries: readonly unknown[], generationId: string): boolean {
-    return isDelivered(entries, generationId);
+  wasDelivered(entries: readonly unknown[], generationId: string, ownerSessionId: string): boolean {
+    return isDelivered(entries, generationId, ownerSessionId);
   }
 }
