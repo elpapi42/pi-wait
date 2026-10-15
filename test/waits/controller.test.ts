@@ -52,12 +52,14 @@ function harness(branch: any[] = [], now = 1_000, generationStart = 0) {
   const timers = new FakeTimers();
   const messages: any[] = [];
   const events: string[] = [];
+  let onAppend: ((data: any) => void) | undefined;
   const pi = {
-    appendEntry(customType: string, data: any) { current.push({ type: "custom", customType, data }); events.push(data.type); },
+    appendEntry(customType: string, data: any) { current.push({ type: "custom", customType, data }); events.push(data.type); onAppend?.(data); },
     sendMessage(...args: any[]) { messages.push(args); events.push("due"); },
   };
   let sessionId: unknown = "session-a";
-  const ctx = { sessionManager: { getBranch: () => current, getHeader: () => ({ id: sessionId }) } };
+  let sessionFile: string | undefined = "/sessions/parent.jsonl";
+  const ctx = { sessionManager: { getBranch: () => current, getHeader: () => ({ id: sessionId }), getSessionFile: () => sessionFile } };
   let ids = 0;
   let generation = generationStart;
   const controller = new Controller(pi, {
@@ -74,9 +76,11 @@ function harness(branch: any[] = [], now = 1_000, generationStart = 0) {
     events,
     controller,
     now: () => clock,
+    onAppend(callback: (data: any) => void) { onAppend = callback; },
     setNow(value: number) { clock = value; },
     setBranch(value: any[]) { current = value; },
     setSessionId(value: unknown) { sessionId = value; },
+    setSessionFile(value: string | undefined) { sessionFile = value; },
   };
 }
 
@@ -128,7 +132,7 @@ test("rejects a different session manager outside a lifecycle transition", async
   const h = harness();
   await h.controller.start(h.ctx);
   await h.controller.schedule(h.ctx, 5, "Check existing.", "existing-check");
-  const other = { sessionManager: { getBranch: () => [], getHeader: () => ({ id: "session-b" }) } };
+  const other = { sessionManager: { getBranch: () => [], getHeader: () => ({ id: "session-b" }), getSessionFile: () => "/sessions/other.jsonl" } };
   await assert.rejects(() => h.controller.schedule(other, 5, "Check other.", "other-check"), /different session manager/);
   assert.equal(h.ctx.sessionManager.getBranch().filter((entry) => entry?.data?.type === "wait.scheduled").length, 1);
   assert.equal(h.timers.pending.size, 1);
@@ -195,7 +199,7 @@ test("does not replay a delivered fired generation after same-ID replacement", a
   first.timers.fire(1);
   await drainQueue();
   const generationId = branch.find((entry) => entry?.data?.type === "wait.fired")?.data.generationId;
-  branch.push({ type: "custom_message", customType: "pi-wait-due-v2", details: { generationId, ownerSessionId: "session-a" } });
+  branch.push({ type: "custom_message", customType: "pi-wait-due-v3", details: { generationId, ownerSessionId: "session-a", ownerSessionFile: "/sessions/parent.jsonl" } });
   await first.controller.schedule(first.ctx, 10, "Check replacement.", "deploy-check");
 
   const restored = harness(branch, 2_000);
@@ -219,13 +223,13 @@ test("delivers simultaneous overdue replacements in schedule order", async () =>
 test("replays a fired wait only when its due message is absent", async () => {
   const generationId = "11111111-1111-4111-8111-111111111111";
   const branch: any[] = [
-    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.scheduled", waitId: "deploy-check", generationId, dueAt: 1_000, message: "Check deploy health." } },
-    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.fired", waitId: "deploy-check", generationId, firedAt: 1_000 } },
+    { type: "custom", customType: "pi-wait-v3", data: { version: 3, ownerSessionId: "session-a", ownerSessionFile: "/sessions/parent.jsonl", type: "wait.scheduled", waitId: "deploy-check", generationId, dueAt: 1_000, message: "Check deploy health." } },
+    { type: "custom", customType: "pi-wait-v3", data: { version: 3, ownerSessionId: "session-a", ownerSessionFile: "/sessions/parent.jsonl", type: "wait.fired", waitId: "deploy-check", generationId, firedAt: 1_000 } },
   ];
   const h = harness(branch);
   await h.controller.start(h.ctx);
   assert.equal(h.messages.length, 1);
-  branch.push({ type: "custom_message", customType: "pi-wait-due-v2", details: { generationId, ownerSessionId: "session-a" } });
+  branch.push({ type: "custom_message", customType: "pi-wait-due-v3", details: { generationId, ownerSessionId: "session-a", ownerSessionFile: "/sessions/parent.jsonl" } });
   await h.controller.afterTree(h.ctx);
   assert.equal(h.messages.length, 1);
 });
@@ -233,9 +237,9 @@ test("replays a fired wait only when its due message is absent", async () => {
 test("replays an owner-fired wait despite a forged foreign due message", async () => {
   const generationId = "11111111-1111-4111-8111-111111111111";
   const branch: any[] = [
-    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.scheduled", waitId: "deploy-check", generationId, dueAt: 1_000, message: "Check deploy health." } },
-    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.fired", waitId: "deploy-check", generationId, firedAt: 1_000 } },
-    { type: "custom_message", customType: "pi-wait-due-v2", details: { generationId, ownerSessionId: "session-b" } },
+    { type: "custom", customType: "pi-wait-v3", data: { version: 3, ownerSessionId: "session-a", ownerSessionFile: "/sessions/parent.jsonl", type: "wait.scheduled", waitId: "deploy-check", generationId, dueAt: 1_000, message: "Check deploy health." } },
+    { type: "custom", customType: "pi-wait-v3", data: { version: 3, ownerSessionId: "session-a", ownerSessionFile: "/sessions/parent.jsonl", type: "wait.fired", waitId: "deploy-check", generationId, firedAt: 1_000 } },
+    { type: "custom_message", customType: "pi-wait-due-v3", details: { generationId, ownerSessionId: "session-b", ownerSessionFile: "/sessions/parent.jsonl" } },
   ];
   const h = harness(branch);
   await h.controller.start(h.ctx);
@@ -309,10 +313,10 @@ test("resumes canceled navigation when later scheduling work", async () => {
 test("rejects generated IDs after ten historical collisions", async () => {
   const branch = Array.from({ length: 10 }, (_, index) => ({
     type: "custom",
-    customType: "pi-wait-v2",
+    customType: "pi-wait-v3",
     data: {
-      version: 2,
-      ownerSessionId: "session-a",
+      version: 3,
+      ownerSessionId: "session-a", ownerSessionFile: "/sessions/parent.jsonl",
       type: "wait.scheduled",
       waitId: `wait-${String(index + 1).padStart(7, "0")}`, 
       generationId: `${String(index + 1).padStart(8, "0")}-1111-4111-8111-111111111111`,
@@ -386,4 +390,146 @@ test("fails closed when the session header ID is missing or invalid", async () =
   await h.controller.afterTree(h.ctx);
   assert.equal(h.timers.pending.size, 0);
   assert.equal(h.messages.length, 0);
+});
+
+for (const now of [1_000, 2_000]) {
+  test(`ignores copied waits with the same ID and another file at ${now}`, async () => {
+    const parent = harness();
+    await parent.controller.start(parent.ctx);
+    await parent.controller.schedule(parent.ctx, 1, "Parent wake.", "parent-check");
+    const child = harness([...parent.ctx.sessionManager.getBranch()], now);
+    child.setSessionFile("/sessions/child.jsonl");
+    await child.controller.start(child.ctx);
+    assert.equal(child.timers.pending.size, 0);
+    assert.equal(child.messages.length, 0);
+    await parent.controller.stop();
+    await child.controller.stop();
+  });
+}
+
+test("skips a queued delivery after the owner changes and replays it for the original file", async () => {
+  const h = harness();
+  await h.controller.start(h.ctx);
+  await h.controller.schedule(h.ctx, 1, "Original wake.", "owner-check");
+  h.onAppend(data => {
+    if (data.type === "wait.fired") queueMicrotask(() => h.setSessionFile("/sessions/other.jsonl"));
+  });
+  h.setNow(2_000);
+  h.timers.fire(1);
+  await drainQueue();
+  assert.equal(h.ctx.sessionManager.getBranch().filter(entry => entry.data.type === "wait.fired").length, 1);
+  assert.equal(h.messages.length, 0);
+  h.setSessionFile("/sessions/parent.jsonl");
+  await h.controller.afterTree(h.ctx);
+  assert.equal(h.messages.length, 1);
+});
+
+test("ignores copied fired records and allows the same-ID child to fire its own wait", async () => {
+  const parent = harness();
+  await parent.controller.start(parent.ctx);
+  await parent.controller.schedule(parent.ctx, 1, "Parent wake.", "parent-check");
+  parent.setNow(2_000);
+  parent.timers.fire(1);
+  await drainQueue();
+  const parentSnapshot = JSON.stringify(parent.ctx.sessionManager.getBranch());
+  const child = harness(structuredClone(parent.ctx.sessionManager.getBranch()), 2_000, 1);
+  child.setSessionFile("/sessions/child.jsonl");
+  await child.controller.start(child.ctx);
+  assert.equal(child.messages.length, 0);
+  assert.equal(child.timers.pending.size, 0);
+  // The copied generation does not reserve a public ID in the child's owner scope.
+  await child.controller.schedule(child.ctx, 1, "Child wake.");
+  child.setNow(3_000);
+  child.timers.fire(1);
+  await drainQueue();
+  assert.deepEqual(child.messages.map(([message]) => message.details.waitId), ["wait-0000001"]);
+  assert.equal(child.messages[0][0].details.ownerSessionFile, "/sessions/child.jsonl");
+  assert.equal(JSON.stringify(parent.ctx.sessionManager.getBranch()), parentSnapshot);
+});
+
+for (const file of [undefined, ""]) {
+  test(`rejects a missing session file (${JSON.stringify(file)}) without a record or timer`, async () => {
+    const h = harness();
+    h.setSessionFile(file);
+    await h.controller.start(h.ctx);
+    await assert.rejects(h.controller.schedule(h.ctx, 1, "No file."), {
+      message: "Wait scheduling requires a session file path. Use a persistent Pi session. No wait was scheduled.",
+    });
+    assert.equal(h.ctx.sessionManager.getBranch().length, 0);
+    assert.equal(h.timers.pending.size, 0);
+    assert.equal(h.messages.length, 0);
+  });
+}
+
+test("rejects stale timer callbacks after the owner path changes", async () => {
+  const h = harness();
+  await h.controller.start(h.ctx);
+  await h.controller.schedule(h.ctx, 1, "Original wake.");
+  h.setSessionFile("/sessions/other.jsonl");
+  h.setNow(2_000);
+  h.timers.fire(1);
+  await drainQueue();
+  assert.equal(h.messages.length, 0);
+  assert.equal(h.ctx.sessionManager.getBranch().length, 1);
+});
+
+test("invalidates a queued delivery on lifecycle pause and replays after navigation resumes", async () => {
+  const h = harness();
+  await h.controller.start(h.ctx);
+  await h.controller.schedule(h.ctx, 1, "Original wake.");
+  h.onAppend(data => {
+    if (data.type === "wait.fired") queueMicrotask(() => { void h.controller.beforeTree(); });
+  });
+  h.setNow(2_000);
+  h.timers.fire(1);
+  await drainQueue();
+  assert.equal(h.messages.length, 0);
+  await h.controller.afterTree(h.ctx);
+  assert.equal(h.messages.length, 1);
+});
+
+test("normalizes relative session filenames without requiring the file to exist", async () => {
+  const branch: any[] = [];
+  const h = harness(branch);
+  h.setSessionFile("test/../nonexistent-wait-owner.jsonl");
+  await h.controller.start(h.ctx);
+  await h.controller.schedule(h.ctx, 1, "Check path.");
+  const expected = `${process.cwd()}/nonexistent-wait-owner.jsonl`;
+  assert.equal(branch[0].data.ownerSessionFile, expected);
+  await h.controller.stop();
+  const restored = harness(branch, 2_000);
+  restored.setSessionFile(expected);
+  await restored.controller.start(restored.ctx);
+  assert.equal(restored.messages.length, 1);
+});
+
+test("keeps legacy V2 waits inactive during reconciliation", async () => {
+  const h = harness([
+    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.scheduled", waitId: "old-check", generationId: "11111111-1111-4111-8111-111111111111", dueAt: 1_000, message: "Old wake." } },
+    { type: "custom", customType: "pi-wait-v2", data: { version: 2, ownerSessionId: "session-a", type: "wait.fired", waitId: "old-check", generationId: "11111111-1111-4111-8111-111111111111", firedAt: 1_000 } },
+  ], 2_000);
+  await h.controller.start(h.ctx);
+  assert.equal(h.messages.length, 0);
+  assert.equal(h.timers.pending.size, 0);
+});
+
+test("skips queued replay when the owner changes before send", async () => {
+  const source = harness();
+  await source.controller.start(source.ctx);
+  await source.controller.schedule(source.ctx, 1, "Replay check.");
+  source.setNow(2_000);
+  source.timers.fire(1);
+  await drainQueue();
+  const restored = harness(structuredClone(source.ctx.sessionManager.getBranch()), 2_000);
+  const getBranch = restored.ctx.sessionManager.getBranch;
+  let reads = 0;
+  restored.ctx.sessionManager.getBranch = () => {
+    if (++reads === 2) queueMicrotask(() => restored.setSessionFile("/sessions/other.jsonl"));
+    return getBranch();
+  };
+  await restored.controller.start(restored.ctx);
+  assert.equal(restored.messages.length, 0);
+  restored.setSessionFile("/sessions/parent.jsonl");
+  await restored.controller.afterTree(restored.ctx);
+  assert.equal(restored.messages.length, 1);
 });

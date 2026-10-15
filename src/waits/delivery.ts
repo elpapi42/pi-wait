@@ -1,4 +1,4 @@
-import { DUE_TYPE, isDelivered } from "./ledger.js";
+import { DUE_TYPE, isDelivered, type Owner } from "./ledger.js";
 
 export function formatDue(waitId: string, message: string): string {
   return `${waitId}:\n\nThis wait is due.\n\n${message}`;
@@ -7,14 +7,15 @@ export function formatDue(waitId: string, message: string): string {
 export class Delivery {
   #tail = Promise.resolve();
 
-  deliver(pi: any, waitId: string, generationId: string, ownerSessionId: string, dueAt: number, message: string): Promise<void> {
+  deliver(pi: any, waitId: string, generationId: string, owner: Owner, dueAt: number, message: string, valid: () => boolean): Promise<void> {
     const work = this.#tail.catch(() => undefined).then(() => {
+      if (!valid()) return;
       pi.sendMessage(
         {
           customType: DUE_TYPE,
           content: formatDue(waitId, message),
           display: true,
-          details: { waitId, generationId, ownerSessionId, dueAt },
+          details: { waitId, generationId, ...owner, dueAt },
         },
         { deliverAs: "steer", triggerTurn: true },
       );
@@ -23,7 +24,7 @@ export class Delivery {
     return work;
   }
 
-  wasDelivered(entries: readonly unknown[], generationId: string, ownerSessionId: string): boolean {
-    return isDelivered(entries, generationId, ownerSessionId);
+  wasDelivered(entries: readonly unknown[], generationId: string, owner: Owner): boolean {
+    return isDelivered(entries, generationId, owner);
   }
 }

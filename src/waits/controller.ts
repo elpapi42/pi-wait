@@ -1,8 +1,9 @@
+import { resolve } from "node:path";
 import { Delivery } from "./delivery.js";
 import { createGenerationId, createWaitId, validateMessage, validateSeconds, validateWaitId } from "./identity.js";
-import { active, appendFired, appendScheduled, firedWaits, isDelivered, project, type Scheduled } from "./ledger.js";
+import { active, appendFired, appendScheduled, firedWaits, isDelivered, project, sameOwner, type Owner, type Scheduled } from "./ledger.js";
 
-type SessionManager = { getBranch(): readonly unknown[]; getHeader(): { id?: unknown } | null | undefined };
+type SessionManager = { getBranch(): readonly unknown[]; getHeader(): { id?: unknown } | null | undefined; getSessionFile(): string | undefined };
 type Context = { sessionManager: SessionManager };
 type Pi = { appendEntry(customType: string, data: unknown): void; sendMessage(message: unknown, options: unknown): void };
 type TimerHandle = unknown;
@@ -62,13 +63,13 @@ export class Controller {
     return this.enqueue(async () => {
       throwIfAborted(signal);
       const sessionManager = this.sessionManager();
-      const ownerSessionId = this.requireOwnerSessionId(sessionManager);
+      const owner = this.requireOwner(sessionManager);
       const entries = sessionManager.getBranch();
-      const chosen = waitId ?? this.nextWaitId(entries, ownerSessionId);
-      const replaced = active(entries, ownerSessionId).get(chosen);
+      const chosen = waitId ?? this.nextWaitId(entries, owner);
+      const replaced = active(entries, owner).get(chosen);
       const scheduled: Scheduled = {
-        version: 2,
-        ownerSessionId,
+        version: 3,
+        ...owner,
         type: "wait.scheduled",
         waitId: chosen,
         generationId: this.#createGenerationId(),
@@ -104,18 +105,18 @@ export class Controller {
     await this.enqueue(async () => {
       if (!this.current(generation)) return;
       const sessionManager = this.sessionManager();
-      const ownerSessionId = this.ownerSessionId(sessionManager);
-      if (!ownerSessionId) return;
+      const owner = this.owner(sessionManager);
+      if (!owner) return;
       const entries = sessionManager.getBranch();
-      for (const record of firedWaits(entries, ownerSessionId)) {
-        if (!this.current(generation)) return;
-        if (!isDelivered(sessionManager.getBranch(), record.generationId, ownerSessionId)) {
-          await this.#delivery.deliver(this.#pi, record.waitId, record.generationId, ownerSessionId, record.dueAt, record.message);
+      for (const record of firedWaits(entries, owner)) {
+        if (!this.current(generation) || !this.matchesOwner(owner)) return;
+        if (!isDelivered(sessionManager.getBranch(), record.generationId, owner)) {
+          await this.#delivery.deliver(this.#pi, record.waitId, record.generationId, owner, record.dueAt, record.message, () => this.current(generation) && this.matchesOwner(owner));
         }
       }
-      for (const record of active(sessionManager.getBranch(), ownerSessionId).values()) {
-        if (!this.current(generation)) return;
-        if (record.dueAt <= this.#now()) await this.fire(record.waitId, record.generationId, ownerSessionId, generation);
+      for (const record of active(sessionManager.getBranch(), owner).values()) {
+        if (!this.current(generation) || !this.matchesOwner(owner)) return;
+        if (record.dueAt <= this.#now()) await this.fire(record.waitId, record.generationId, owner, generation);
         else this.arm(record, generation);
       }
     });
@@ -123,18 +124,19 @@ export class Controller {
 
   private arm(record: Scheduled, generation: number): void {
     if (!this.current(generation) || this.#handles.has(record.generationId)) return;
+    const owner = { ownerSessionId: record.ownerSessionId, ownerSessionFile: record.ownerSessionFile };
     const delay = Math.max(0, record.dueAt - this.#now());
     const handle = this.#timers.set(delay, () => {
-      void this.enqueue(() => this.fire(record.waitId, record.generationId, record.ownerSessionId, generation)).catch(() => undefined);
+      void this.enqueue(() => this.fire(record.waitId, record.generationId, owner, generation)).catch(() => undefined);
     });
     this.#handles.set(record.generationId, handle);
   }
 
-  private async fire(waitId: string, generationId: string, ownerSessionId: string, generation: number): Promise<void> {
+  private async fire(waitId: string, generationId: string, owner: Owner, generation: number): Promise<void> {
     if (!this.current(generation)) return;
     const sessionManager = this.sessionManager();
-    if (this.ownerSessionId(sessionManager) !== ownerSessionId) return;
-    const record = active(sessionManager.getBranch(), ownerSessionId).get(waitId);
+    if (!this.matchesOwner(owner)) return;
+    const record = active(sessionManager.getBranch(), owner).get(waitId);
     if (!record || record.generationId !== generationId) return;
     if (record.dueAt > this.#now()) {
       this.disarm(generationId);
@@ -142,12 +144,12 @@ export class Controller {
       return;
     }
     this.disarm(generationId);
-    appendFired(this.#pi, { version: 2, ownerSessionId, type: "wait.fired", waitId, generationId, firedAt: this.#now() });
-    await this.#delivery.deliver(this.#pi, record.waitId, record.generationId, ownerSessionId, record.dueAt, record.message);
+    appendFired(this.#pi, { version: 3, ...owner, type: "wait.fired", waitId, generationId, firedAt: this.#now() });
+    await this.#delivery.deliver(this.#pi, record.waitId, record.generationId, owner, record.dueAt, record.message, () => this.current(generation) && this.matchesOwner(owner));
   }
 
-  private nextWaitId(entries: readonly unknown[], ownerSessionId: string): string {
-    const existing = new Set(project(entries, ownerSessionId).keys());
+  private nextWaitId(entries: readonly unknown[], owner: Owner): string {
+    const existing = new Set(project(entries, owner).keys());
     for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt += 1) {
       const waitId = this.#createWaitId();
       if (!existing.has(waitId)) return waitId;
@@ -189,15 +191,24 @@ export class Controller {
     return this.#sessionManager;
   }
 
-  private ownerSessionId(sessionManager: SessionManager): string | undefined {
+  private owner(sessionManager: SessionManager): Owner | undefined {
     const id = sessionManager.getHeader()?.id;
-    return typeof id === "string" && id.length > 0 ? id : undefined;
+    const file = sessionManager.getSessionFile();
+    if (typeof id !== "string" || id.length === 0 || typeof file !== "string" || file.length === 0) return undefined;
+    return { ownerSessionId: id, ownerSessionFile: resolve(file) };
   }
 
-  private requireOwnerSessionId(sessionManager: SessionManager): string {
-    const ownerSessionId = this.ownerSessionId(sessionManager);
-    if (!ownerSessionId) throw new Error("Wait controller requires a non-empty session header ID.");
-    return ownerSessionId;
+  private requireOwner(sessionManager: SessionManager): Owner {
+    const id = sessionManager.getHeader()?.id;
+    if (typeof id !== "string" || id.length === 0) throw new Error("Wait controller requires a non-empty session header ID.");
+    const owner = this.owner(sessionManager);
+    if (!owner) throw new Error("Wait scheduling requires a session file path. Use a persistent Pi session. No wait was scheduled.");
+    return owner;
+  }
+
+  private matchesOwner(owner: Owner): boolean {
+    const current = this.owner(this.sessionManager());
+    return current !== undefined && sameOwner(current, owner);
   }
 
   private current(generation: number): boolean {

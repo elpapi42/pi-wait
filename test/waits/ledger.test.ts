@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { active, appendFired, appendScheduled, DUE_TYPE, ENTRY_TYPE, firedWaits, isDelivered, project } from "../../src/waits/ledger.js";
 
-const ownerA = "session-a";
-const ownerB = "session-b";
+const ownerA = { ownerSessionId: "session-a", ownerSessionFile: "/sessions/parent.jsonl" };
+const ownerB = { ...ownerA, ownerSessionFile: "/sessions/child.jsonl" };
 const scheduled = {
-  version: 2 as const,
-  ownerSessionId: ownerA,
+  version: 3 as const,
+  ...ownerA,
   type: "wait.scheduled" as const,
   waitId: "deploy-check",
   generationId: "11111111-1111-4111-8111-111111111111",
@@ -18,8 +18,8 @@ function entry(data: unknown, customType = ENTRY_TYPE) {
   return { type: "custom", customType, data };
 }
 
-function fired(generationId = scheduled.generationId, ownerSessionId = ownerA) {
-  return { version: 2 as const, ownerSessionId, type: "wait.fired" as const, waitId: scheduled.waitId, generationId, firedAt: 1_001 };
+function fired(generationId = scheduled.generationId, owner = ownerA) {
+  return { version: 3 as const, ...owner, type: "wait.fired" as const, waitId: scheduled.waitId, generationId, firedAt: 1_001 };
 }
 
 test("projects scheduled waits and completes matching owner-fired generations", () => {
@@ -61,7 +61,7 @@ test("keeps independent generated IDs separate", () => {
   assert.equal(records.size, 2);
 });
 
-test("appends V2 lifecycle records with the V2 custom type", () => {
+test("appends V3 lifecycle records with the V3 custom type", () => {
   const calls: Array<[string, unknown]> = [];
   const pi = { appendEntry(type: string, data: unknown) { calls.push([type, data]); } };
   appendScheduled(pi, scheduled);
@@ -70,20 +70,20 @@ test("appends V2 lifecycle records with the V2 custom type", () => {
 });
 
 test("matches delivered due messages by immutable generation and owner", () => {
-  const entries = [{ type: "custom_message", customType: DUE_TYPE, details: { generationId: scheduled.generationId, ownerSessionId: ownerA } }];
+  const entries = [{ type: "custom_message", customType: DUE_TYPE, details: { generationId: scheduled.generationId, ...ownerA } }];
   assert.equal(isDelivered(entries, scheduled.generationId, ownerA), true);
   assert.equal(isDelivered(entries, scheduled.generationId, ownerB), false);
   assert.equal(isDelivered(entries, "22222222-2222-4222-8222-222222222222", ownerA), false);
 });
 
-test("ignores legacy V1 records and due messages after the strict V2 cutover", () => {
+test("ignores legacy V1 records and due messages after the strict V3 cutover", () => {
   const legacyScheduled = { type: "wait.scheduled", waitId: scheduled.waitId, generationId: scheduled.generationId, dueAt: scheduled.dueAt, message: scheduled.message };
   const legacyDue = [{ type: "custom_message", customType: "pi-wait-due", details: { generationId: scheduled.generationId } }];
   assert.equal(project([entry(legacyScheduled, "pi-wait")], ownerA).size, 0);
   assert.equal(isDelivered(legacyDue, scheduled.generationId, ownerA), false);
 });
 
-test("ignores malformed V2 ledger records", () => {
+test("ignores malformed V3 ledger records", () => {
   const records = project([
     entry({ ...scheduled, dueAt: Infinity }),
     entry({ ...scheduled, message: "   " }),
@@ -94,4 +94,21 @@ test("ignores malformed V2 ledger records", () => {
     entry({ ...fired(), firedAt: -1 }),
   ], ownerA);
   assert.equal(records.size, 0);
+});
+
+test("rejects legacy V2 records and due messages even when their IDs match", () => {
+  const legacy = { ...scheduled, version: 2 };
+  const due = { type: "custom_message", customType: "pi-wait-due-v2", details: { generationId: scheduled.generationId, ...ownerA } };
+  assert.equal(project([entry(legacy, "pi-wait-v2"), entry(legacy)], ownerA).size, 0);
+  assert.equal(isDelivered([due], scheduled.generationId, ownerA), false);
+});
+
+test("rejects missing and relative V3 owner paths", () => {
+  for (const ownerSessionFile of [undefined, "", "relative.jsonl", 42]) {
+    assert.equal(project([entry({ ...scheduled, ownerSessionFile })], ownerA).size, 0);
+  }
+});
+
+test("ignores a changed ID even when the path matches", () => {
+  assert.equal(project([entry(scheduled)], { ...ownerA, ownerSessionId: "another-id" }).size, 0);
 });
