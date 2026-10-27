@@ -17,8 +17,8 @@ export function createGenerationId(): string {
 }
 
 export function validateSeconds(seconds: number): void {
-  if (!Number.isFinite(seconds) || seconds < 1 || seconds > 3600) {
-    throw new Error("Wait seconds must be a finite number from 1 through 3600.");
+  if (!Number.isFinite(seconds) || seconds < 1 || seconds > 86400) {
+    throw new Error("Wait seconds must be a finite number from 1 through 86400.");
   }
 }
 

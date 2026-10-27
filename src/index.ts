@@ -32,7 +32,7 @@ export default function register(pi: ExtensionAPI): void {
     label: "Wait",
     description: WAIT_DESCRIPTION,
     parameters: Type.Object({
-      seconds: Type.Number({ description: SECONDS_DESCRIPTION, minimum: 1, maximum: 3600 }),
+      seconds: Type.Number({ description: SECONDS_DESCRIPTION, minimum: 1, maximum: 86400 }),
       message: Type.String({ description: MESSAGE_DESCRIPTION }),
       id: Type.Optional(Type.String({ description: ID_DESCRIPTION })),
     }),

@@ -8,7 +8,7 @@
 wait(seconds, message, id?) → wait ID
 ```
 
-- `seconds` is a finite number from 1 through 3600.
+- `seconds` is a finite number from 1 through 86400 (24 hours).
 - `message` is the future check context. Include what changed, what to check, and the command, URL, or identifier needed to act.
 - `id` is an optional stable replacement ID. It must contain 1 to 64 lowercase ASCII letters or digits, start with a letter, and use single hyphens only between nonempty segments.
 

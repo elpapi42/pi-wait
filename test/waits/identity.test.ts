@@ -25,9 +25,9 @@ test("creates one generated public ID and a distinct UUID-shaped generation ID",
   assert.match(createGenerationId(), /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 });
 
-test("accepts finite wait seconds from one through 3600", () => {
-  for (const seconds of [1, 1.5, 3600]) assert.doesNotThrow(() => validateSeconds(seconds));
-  for (const seconds of [0, 3600.1, Infinity, NaN]) assert.throws(() => validateSeconds(seconds));
+test("accepts finite wait seconds from one through 86400", () => {
+  for (const seconds of [1, 1.5, 3600, 86400]) assert.doesNotThrow(() => validateSeconds(seconds));
+  for (const seconds of [0, 86400.1, Infinity, NaN]) assert.throws(() => validateSeconds(seconds));
 });
 
 test("rejects an empty wait message after trimming while preserving nonempty text", () => {

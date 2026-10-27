@@ -18,7 +18,7 @@ test("registers only wait with its due renderer and lifecycle handlers", () => {
   assert.match(tools[0].description, /one-shot, non-blocking wait/);
   assert.match(tools[0].description, /Do not use it for fork completion or shell sleep/);
   assert.equal(tools[0].parameters.properties.seconds.minimum, 1);
-  assert.equal(tools[0].parameters.properties.seconds.maximum, 3600);
+  assert.equal(tools[0].parameters.properties.seconds.maximum, 86400);
   assert.match(tools[0].parameters.properties.message.description, /what is being awaited/);
   assert.match(tools[0].parameters.properties.id.description, /current branch/);
   assert.match(tools[0].parameters.properties.id.description, /1 to 64 lowercase ASCII/);
